@@ -15,7 +15,7 @@ namespace SDUSDContract
         private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AQdP56hHfo54JCWfpPw4MXviJDtQJMtXFa");
 
 
-        [Appcall("e4460377f6f8398170e6dea4646027ac9d117597")] //JumpCenter ScriptHash
+        [Appcall("e4460377f6f8398170e6dea4646027ac9d117597")] 
         public static extern object SDTContract(string method, object[] args);
 
         [DisplayName("transfer")]
@@ -62,11 +62,25 @@ namespace SDUSDContract
         private const string CONFIG_SDT_PRICE = "config_sdt_price";
         private const string CONFIG_SDT_RATE = "config_sdt_rate";
 
+        private const string STORAGE_ACCOUNT = "storage_account"; 
+        private const string STORAGE_TXID = "storage_txid";
+
+        //交易类型
+        public enum ConfigTranType
+        {
+            TRANSACTION_TYPE_LOCK = 1,//锁仓
+            TRANSACTION_TYPE_DRAW,//提取
+            TRANSACTION_TYPE_FREE,//释放
+            TRANSACTION_TYPE_WIPE,//赎回
+            TRANSACTION_TYPE_SHUT,//关闭
+            TRANSACTION_TYPE_FORCESHUT,//对手关闭
+            TRANSACTION_TYPE_GIVE,//转移所有权
+        }
 
 
         public static Object Main(string operation, params object[] args)
         {
-            var magicstr = "2018-06-06 15:16";
+            var magicstr = "2018-06-12 16:16";
 
             if (Runtime.Trigger == TriggerType.Verification)
             {
@@ -106,14 +120,29 @@ namespace SDUSDContract
                     return Transfer(from, to, value);
                 }
 
-                if (operation == "setConfig")
+                if (operation == "setAccount")
                 {
+                    if (args.Length != 1) return false;
 
+                    byte[] address = (byte[])args[0];
+
+                    return SetAccount(address);
+                }
+                 
+                if (operation == "setConfig")
+                { 
                     if (args.Length != 2) return false;
                     string key = (string)args[0];
                     BigInteger value = (BigInteger)args[1];
+                    return SetConfig(key, value); 
+                }
 
-                    return SetConfig(key, value);
+                if (operation == "getConfig")
+                {
+                    if (args.Length != 1) return false;
+                    string key = (string)args[0];
+
+                    return GetConfig(key);
                 }
 
                 if (operation == "getCDP")
@@ -186,43 +215,34 @@ namespace SDUSDContract
             return true;
         }
 
-        public static Boolean SetConfig(string key, BigInteger value)
-        {
-
-            if (key == null || key == "") return false;
-
+        public static bool SetAccount(byte[] address)
+        { 
             if (!Runtime.CheckWitness(SuperAdmin)) return false;
 
-            ConfigInfo configInfo = new ConfigInfo();
+            byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
-            if (key == "sdt_price")
-            {
-                configInfo.sdt_price = value;
-            }
+            if (addr.Length == 0) return false;
 
-            if (key == "sdt_rate")
-            {
-                configInfo.sdt_rate = value;
-            }
-
-            byte[] config = Helper.Serialize(configInfo);
-
-            Storage.Put(Storage.CurrentContext, CONFIG_KEY, config);
-
+            Storage.Put(Storage.CurrentContext, STORAGE_ACCOUNT, address);
             return true;
         }
 
-        public static ConfigInfo GetConfig()
+        public static bool SetConfig(string key, BigInteger value)
         {
+            if (key == null || key == "") return false;
+            //只允许超管操作
+            if (!Runtime.CheckWitness(SuperAdmin)) return false;
 
-            string key = CONFIG_KEY;
-            byte[] config = Storage.Get(Storage.CurrentContext, key);
+            Storage.Put(Storage.CurrentContext, key.AsByteArray(), value);
 
-            if (config.Length == 0) return null;
+            return true; 
+        }
 
-            ConfigInfo configInfo = (ConfigInfo)Helper.Deserialize(config);
+        public static BigInteger GetConfig(string key)
+        {
+            if (key == null || key == "") return 0;
 
-            return configInfo;
+            return Storage.Get(Storage.CurrentContext, key.AsByteArray()).AsBigInteger();
         }
 
         /*查询债仓详情*/
@@ -240,7 +260,7 @@ namespace SDUSDContract
         }
 
         /*开启一个新的债仓*/
-        public static Boolean OpenCDP(byte[] onwer)
+        public static bool OpenCDP(byte[] onwer)
         {
 
             if (!Runtime.CheckWitness(onwer)) return false;
@@ -249,7 +269,7 @@ namespace SDUSDContract
 
             if (cdpInfo_ != null) return false;
 
-            var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
+            byte[] txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
 
             CDPTransferInfo cdpInfo = new CDPTransferInfo();
             cdpInfo.onwer = onwer;
@@ -265,7 +285,7 @@ namespace SDUSDContract
         }
 
         /*向债仓锁定数字资产*/
-        public static Boolean Lock(byte[] onwer, BigInteger value)
+        public static bool Lock(byte[] onwer, BigInteger value)
         {
             if (value == 0) return false;
 
@@ -281,21 +301,48 @@ namespace SDUSDContract
             arg[2] = value;
 
             if (!(bool)SDTContract("transfer", arg)) return false;
-
+             
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
 
-            cdpInfo.locked = cdpInfo.locked + value;
+            object[] obj = new object[1];
+            obj[0] = txid;
+
+            TransferInfo transferInfo = (TransferInfo)SDTContract("getTXInfo", obj);
+
+            byte[] to = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
+
+            /*校验交易信息*/
+            if (transferInfo.from != onwer || transferInfo.to != to || value != transferInfo.value) return false;
+
+            byte[] used = Storage.Get(Storage.CurrentContext, txid);
+            /*判断txid是否已被使用*/
+            if (used.Length != 0) return false;
+            
+            cdpInfo.locked = cdpInfo.locked + value; 
+            BigInteger currLock = cdpInfo.locked;
 
             byte[] key = onwer.Concat(ConvertN(0));
-            byte[] cdp = Helper.Serialize(cdpInfo);
-
+            byte[] cdp = Helper.Serialize(cdpInfo); 
             Storage.Put(Storage.CurrentContext, key, cdp);
+
+            //记录交易详细数据
+            CDPTransferDetail detail = new CDPTransferDetail();
+            detail.from = onwer;
+            detail.cdpTxid = cdpInfo.txid;
+            detail.type = (int)ConfigTranType.TRANSACTION_TYPE_LOCK;
+            detail.operated = value;
+            detail.hasLocked = currLock;
+            detail.hasDrawed = cdpInfo.hasDrawed;
+            detail.txid = txid;
+            Storage.Put(Storage.CurrentContext, txid, Helper.Serialize(detail));
+
+            /*记录txid 已被使用*/
+            Storage.Put(Storage.CurrentContext, txid, onwer);
             return true;
         }
 
-        public static Boolean Draw(byte[] onwer, BigInteger drawSdusdValue)
+        public static bool Draw(byte[] onwer, BigInteger drawSdusdValue)
         {
-
             if (drawSdusdValue == 0) return false;
 
             if (!Runtime.CheckWitness(onwer)) return false;
@@ -306,11 +353,9 @@ namespace SDUSDContract
 
             BigInteger locked = cdpInfo.locked;
             BigInteger hasDrawed = cdpInfo.hasDrawed;
-
-            ConfigInfo configInfo = GetConfig();
-
-            BigInteger sdt_price = configInfo.sdt_price;
-            BigInteger sdt_rate = configInfo.sdt_rate;
+             
+            BigInteger sdt_price = GetConfig(CONFIG_SDT_PRICE); 
+            BigInteger sdt_rate = GetConfig(CONFIG_SDT_RATE); ;
 
             BigInteger sdusd_limit = sdt_price * locked * 100 / sdt_rate;
 
@@ -325,6 +370,20 @@ namespace SDUSDContract
 
             Storage.Put(Storage.CurrentContext, key, cdp);
 
+
+            //记录交易详细数据
+            var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
+            CDPTransferDetail detail = new CDPTransferDetail();
+            detail.from = onwer;
+            detail.cdpTxid = cdpInfo.txid;
+            detail.txid = txid;
+            detail.type = (int)ConfigTranType.TRANSACTION_TYPE_DRAW;
+            detail.operated = drawSdusdValue;
+            detail.hasLocked = locked;
+            detail.hasDrawed = hasDrawed;
+
+            Storage.Put(Storage.CurrentContext, txid, Helper.Serialize(detail));
+             
             return true;
         }
 
@@ -347,8 +406,39 @@ namespace SDUSDContract
         {
             public BigInteger sdt_price;
             public BigInteger sdt_rate;
+             
+        }
+
+        public class TransferInfo
+        {
+            public byte[] from;
+            public byte[] to;
+            public BigInteger value;
+        }
 
 
+        public class CDPTransferDetail
+        {
+            //地址
+            public byte[] from;
+
+            //CDP交易序号
+            public byte[] cdpTxid;
+
+            //交易序号
+            public byte[] txid;
+
+            //操作对应资产的金额,如PNeo
+            public BigInteger operated;
+
+            //已经被锁定的资产金额,如PNeo
+            public BigInteger hasLocked;
+
+            //已经提取的资产金额，如SDUSDT  
+            public BigInteger hasDrawed;
+
+            //操作类型
+            public int type;
         }
 
         private static byte[] ConvertN(BigInteger n)
@@ -386,6 +476,6 @@ namespace SDUSDContract
             }
             return true;
         }
-
+         
     }
 }
