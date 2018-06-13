@@ -80,7 +80,7 @@ namespace SDUSDContract
 
         public static Object Main(string operation, params object[] args)
         {
-            var magicstr = "2018-06-12 16:16";
+            var magicstr = "2018-06-13 15:16";
 
             if (Runtime.Trigger == TriggerType.Verification)
             {
@@ -221,7 +221,7 @@ namespace SDUSDContract
 
             byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
-            if (addr.Length == 0) return false;
+            if (addr.Length != 0) return false;
 
             Storage.Put(Storage.CurrentContext, STORAGE_ACCOUNT, address);
             return true;
@@ -262,7 +262,6 @@ namespace SDUSDContract
         /*开启一个新的债仓*/
         public static bool OpenCDP(byte[] onwer)
         {
-
             if (!Runtime.CheckWitness(onwer)) return false;
 
             CDPTransferInfo cdpInfo_ = GetCDP(onwer);
@@ -276,7 +275,7 @@ namespace SDUSDContract
             cdpInfo.txid = txid;
             cdpInfo.locked = 0;
             cdpInfo.hasDrawed = 0;
-
+             
             byte[] key = onwer.Concat(ConvertN(0));
             byte[] cdp = Helper.Serialize(cdpInfo);
 
@@ -301,7 +300,7 @@ namespace SDUSDContract
             arg[2] = value;
 
             if (!(bool)SDTContract("transfer", arg)) return false;
-             
+            
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
 
             object[] obj = new object[1];
@@ -369,8 +368,7 @@ namespace SDUSDContract
             byte[] cdp = Helper.Serialize(cdpInfo);
 
             Storage.Put(Storage.CurrentContext, key, cdp);
-
-
+            
             //记录交易详细数据
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
             CDPTransferDetail detail = new CDPTransferDetail();
