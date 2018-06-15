@@ -12,10 +12,9 @@ namespace SDUSDContract
     {
 
         //超级管理员账户
-        private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AQdP56hHfo54JCWfpPw4MXviJDtQJMtXFa");
+        private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AZ77FiX7i9mRUPF2RyuJD2L8kS6UDnQ9Y7");
 
-
-        [Appcall("e4460377f6f8398170e6dea4646027ac9d117597")] 
+        [Appcall("b7580f0a74655f2f19415c3c975dbc615b30af47")] 
         public static extern object SDTContract(string method, object[] args);
 
         [DisplayName("transfer")]
@@ -29,11 +28,11 @@ namespace SDUSDContract
         }
         public static string Name()
         {
-            return "Special Drawing USD";
+            return "Special Drawing USD2";
         }
         public static string Symbol()
         {
-            return "SDUSD";
+            return "SDUSD2";
         }
 
         public static byte Decimals()
@@ -80,7 +79,7 @@ namespace SDUSDContract
 
         public static Object Main(string operation, params object[] args)
         {
-            var magicstr = "2018-06-13 15:16";
+            var magicstr = "2018-06-14 15:16";
 
             if (Runtime.Trigger == TriggerType.Verification)
             {
@@ -178,6 +177,39 @@ namespace SDUSDContract
                     BigInteger value = (BigInteger)args[0];
 
                     return Draw(onwer, value);
+                }
+                //测试合约转账
+                if (operation == "test_sdt")
+                {
+                    if (args.Length != 2) return false;
+                    byte[] to = (byte[])args[0];
+                    BigInteger value = (BigInteger)args[1];
+
+                    //本合约地址
+                    byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
+
+                    object[] arg = new object[3];
+                    arg[0] = addr;
+                    arg[1] = to;
+                    arg[2] = value;
+                    if (!(bool)SDTContract("transfer_app", arg)) return false;
+
+                    return true;
+                }
+                //给合约增发相应SDT
+                if (operation == "test_mint")
+                {
+                    if (args.Length != 1) return false;
+                    BigInteger value = (BigInteger)args[0];
+
+                    //本合约地址
+                    byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
+
+                    object[] arg = new object[2];
+                    arg[0] = addr;
+                    arg[1] = value;
+                    if (!(bool)SDTContract("mint", arg)) return false;
+                    return true;
                 }
 
             }
@@ -290,13 +322,15 @@ namespace SDUSDContract
 
             if (!Runtime.CheckWitness(onwer)) return false;
 
-            CDPTransferInfo cdpInfo = GetCDP(onwer);
+            byte[] key = onwer.Concat(ConvertN(0));
+            byte[] cdp = Storage.Get(Storage.CurrentContext, key);
+            if (cdp.Length == 0) return false;
 
-            if (cdpInfo == null) return false;
+            byte[] to = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
             object[] arg = new object[3];
             arg[0] = onwer;
-            arg[1] = SuperAdmin;
+            arg[1] = to;
             arg[2] = value;
 
             if (!(bool)SDTContract("transfer", arg)) return false;
@@ -308,7 +342,6 @@ namespace SDUSDContract
 
             TransferInfo transferInfo = (TransferInfo)SDTContract("getTXInfo", obj);
 
-            byte[] to = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
             /*校验交易信息*/
             if (transferInfo.from != onwer || transferInfo.to != to || value != transferInfo.value) return false;
@@ -316,13 +349,13 @@ namespace SDUSDContract
             byte[] used = Storage.Get(Storage.CurrentContext, txid);
             /*判断txid是否已被使用*/
             if (used.Length != 0) return false;
-            
+
+            CDPTransferInfo cdpInfo = (CDPTransferInfo)Helper.Deserialize(cdp);
+
             cdpInfo.locked = cdpInfo.locked + value; 
             BigInteger currLock = cdpInfo.locked;
 
-            byte[] key = onwer.Concat(ConvertN(0));
-            byte[] cdp = Helper.Serialize(cdpInfo); 
-            Storage.Put(Storage.CurrentContext, key, cdp);
+            Storage.Put(Storage.CurrentContext, key, Helper.Serialize(cdpInfo));
 
             //记录交易详细数据
             CDPTransferDetail detail = new CDPTransferDetail();
