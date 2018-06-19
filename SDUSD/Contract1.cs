@@ -14,7 +14,7 @@ namespace SDUSDContract
         //超级管理员账户
         private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AZ77FiX7i9mRUPF2RyuJD2L8kS6UDnQ9Y7");
 
-        [Appcall("b7580f0a74655f2f19415c3c975dbc615b30af47")] 
+        [Appcall("61afc7273c7c99c6fb962e5ac5bd5df4f0b1efd0")] 
         public static extern object SDTContract(string method, object[] args);
 
         [DisplayName("transfer")]
