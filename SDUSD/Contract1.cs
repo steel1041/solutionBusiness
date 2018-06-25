@@ -14,7 +14,7 @@ namespace SDUSDContract
         //超级管理员账户
         private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AZ77FiX7i9mRUPF2RyuJD2L8kS6UDnQ9Y7");
 
-        [Appcall("61afc7273c7c99c6fb962e5ac5bd5df4f0b1efd0")] 
+        [Appcall("b0a90b73c6804cbb2d94e4802e084c076bc099e6")] 
         public static extern object SDTContract(string method, object[] args);
 
         [DisplayName("transfer")]
@@ -28,11 +28,11 @@ namespace SDUSDContract
         }
         public static string Name()
         {
-            return "Special Drawing USD2";
+            return "AA USD";
         }
         public static string Symbol()
         {
-            return "SDUSD2";
+            return "AAUSD";
         }
 
         public static byte Decimals()
@@ -79,7 +79,7 @@ namespace SDUSDContract
 
         public static Object Main(string operation, params object[] args)
         {
-            var magicstr = "2018-06-14 15:16";
+            var magicstr = "2018-06-20 15:16";
 
             if (Runtime.Trigger == TriggerType.Verification)
             {
@@ -104,17 +104,12 @@ namespace SDUSDContract
                     if (args.Length != 3) return false;
                     byte[] from = (byte[])args[0];
                     byte[] to = (byte[])args[1];
-                    if (from == to)
-                        return true;
                     if (from.Length == 0 || to.Length == 0)
                         return false;
                     BigInteger value = (BigInteger)args[2];
                     //没有from签名，不让转
                     if (!Runtime.CheckWitness(from))
                         return false;
-                    //如果有跳板调用，不让转
-                    //if (ExecutionEngine.EntryScriptHash.AsBigInteger() != callscript.AsBigInteger())
-                    //return false;
 
                     return Transfer(from, to, value);
                 }
@@ -124,7 +119,7 @@ namespace SDUSDContract
                     if (args.Length != 1) return false;
 
                     byte[] address = (byte[])args[0];
-
+                    if (!Runtime.CheckWitness(SuperAdmin)) return false;
                     return SetAccount(address);
                 }
                  
@@ -171,49 +166,113 @@ namespace SDUSDContract
                 if (operation == "draw")
                 {
                     if (args.Length != 2) return false;
-
                     byte[] onwer = (byte[])args[0];
-
                     BigInteger value = (BigInteger)args[0];
+
+                    if (value <= 0) return false;
+                    if (!Runtime.CheckWitness(onwer)) return false;
 
                     return Draw(onwer, value);
                 }
+                //管理员操作
+                if (operation == "shut")
+                {
+                    if (args.Length != 1) return false;
+                    //用户地址
+                    byte[] addr = (byte[])args[0];
+                    if (!Runtime.CheckWitness(SuperAdmin)) return false;
+                    return Shut(addr);
+
+                }
                 //测试合约转账
-                if (operation == "test_sdt")
+                if (operation == "transfer_sdt")
                 {
                     if (args.Length != 2) return false;
                     byte[] to = (byte[])args[0];
                     BigInteger value = (BigInteger)args[1];
 
+                    if (!Runtime.CheckWitness(SuperAdmin)) return false;
+
                     //本合约地址
                     byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
-
                     object[] arg = new object[3];
                     arg[0] = addr;
                     arg[1] = to;
                     arg[2] = value;
-                    if (!(bool)SDTContract("transfer_app", arg)) return false;
-
+                    if (!(bool)SDTContract("transfer_contract", arg)) return false;
                     return true;
                 }
-                //给合约增发相应SDT
-                if (operation == "test_mint")
-                {
-                    if (args.Length != 1) return false;
-                    BigInteger value = (BigInteger)args[0];
 
+                //合约调用授权转账
+                if (operation == "test_transferfrom")
+                {
+                    if (args.Length != 3) return false;
                     //本合约地址
                     byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
-                    object[] arg = new object[2];
-                    arg[0] = addr;
-                    arg[1] = value;
-                    if (!(bool)SDTContract("mint", arg)) return false;
+                    object[] arg = new object[4];
+                    arg[0] = args[0];
+                    arg[1] = addr;
+                    arg[2] = args[1];
+                    arg[3] = args[2];
+                    if (!(bool)SDTContract("transferFrom", arg)) return false;
                     return true;
                 }
 
             }
 
+            return true;
+        }
+
+        private static Boolean Shut(byte[] addr)
+        {
+            //CDP是否存在
+            var key = addr.Concat(ConvertN(0));
+
+            byte[] cdp = Storage.Get(Storage.CurrentContext, key);
+            if (cdp.Length == 0)
+                return false;
+            CDPTransferInfo cdpInfo = (CDPTransferInfo)Helper.Deserialize(cdp);
+
+            byte[] owner = cdpInfo.onwer;
+            BigInteger locked = cdpInfo.locked;
+            BigInteger hasDrawed = cdpInfo.hasDrawed;
+
+            //当前余额必须要大于负债
+            BigInteger balance = BalanceOf(addr);
+            if (hasDrawed > balance) return false;
+
+            var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
+
+            //从合约地址转账
+            byte[] from = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
+            object[] arg = new object[3];
+            arg[0] = from;
+            arg[1] = owner;
+            arg[2] = locked;
+
+            if (!(bool)SDTContract("transfer_contract", arg)) return false;
+
+            if (hasDrawed > 0)
+            {
+                //先要销毁SD
+                Transfer(addr, null, hasDrawed);
+                //减去总量
+                operateTotalSupply(0 - hasDrawed);
+            }
+            //关闭CDP
+            Storage.Delete(Storage.CurrentContext, key);
+
+            //记录交易详细数据
+            CDPTransferDetail detail = new CDPTransferDetail();
+            detail.from = addr;
+            detail.cdpTxid = cdpInfo.txid;
+            detail.txid = txid;
+            detail.type = (int)ConfigTranType.TRANSACTION_TYPE_SHUT;
+            detail.operated = hasDrawed;
+            detail.hasLocked = locked;
+            detail.hasDrawed = hasDrawed;
+            Storage.Put(Storage.CurrentContext, txid, Helper.Serialize(detail));
             return true;
         }
 
@@ -249,8 +308,6 @@ namespace SDUSDContract
 
         public static bool SetAccount(byte[] address)
         { 
-            if (!Runtime.CheckWitness(SuperAdmin)) return false;
-
             byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
             if (addr.Length != 0) return false;
@@ -327,6 +384,7 @@ namespace SDUSDContract
             if (cdp.Length == 0) return false;
 
             byte[] to = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
+            if (to.Length == 0) return false;
 
             object[] arg = new object[3];
             arg[0] = onwer;
@@ -375,14 +433,11 @@ namespace SDUSDContract
 
         public static bool Draw(byte[] onwer, BigInteger drawSdusdValue)
         {
-            if (drawSdusdValue == 0) return false;
-
-            if (!Runtime.CheckWitness(onwer)) return false;
-
-            CDPTransferInfo cdpInfo = GetCDP(onwer);
-
-            if (cdpInfo == null) return false;
-
+            byte[] key = onwer.Concat(ConvertN(0));
+            byte[] cdp = Storage.Get(Storage.CurrentContext, key);
+            if (cdp.Length == 0) return false;
+            //获取CDP
+            CDPTransferInfo cdpInfo = (CDPTransferInfo)Helper.Deserialize(cdp);
             BigInteger locked = cdpInfo.locked;
             BigInteger hasDrawed = cdpInfo.hasDrawed;
              
@@ -397,8 +452,6 @@ namespace SDUSDContract
 
             cdpInfo.hasDrawed = hasDrawed + drawSdusdValue;
 
-            byte[] key = onwer.Concat(ConvertN(0));
-            byte[] cdp = Helper.Serialize(cdpInfo);
 
             Storage.Put(Storage.CurrentContext, key, cdp);
             
@@ -490,7 +543,6 @@ namespace SDUSDContract
         public static bool Increase(byte[] to, BigInteger value)
         {
             if (value <= 0) return false;
-            if (!Runtime.CheckWitness(to)) return false;
 
             Transfer(null, to, value);
 
