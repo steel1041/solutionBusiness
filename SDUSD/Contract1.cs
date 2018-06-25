@@ -20,31 +20,6 @@ namespace SDUSDContract
         [DisplayName("transfer")]
         public static event Action<byte[], byte[], BigInteger> Transferred;
 
-
-        //nep5 func
-        public static BigInteger TotalSupply()
-        {
-            return Storage.Get(Storage.CurrentContext, TOTAL_SUPPLY).AsBigInteger();
-        }
-        public static string Name()
-        {
-            return "AA USD";
-        }
-        public static string Symbol()
-        {
-            return "AAUSD";
-        }
-
-        public static byte Decimals()
-        {
-            return 8;
-        }
-
-        public static BigInteger BalanceOf(byte[] address)
-        {
-            return Storage.Get(Storage.CurrentContext, address).AsBigInteger();
-        }
-
         //因子
         private const ulong factor = 100000000;
 
@@ -88,39 +63,35 @@ namespace SDUSDContract
             else if (Runtime.Trigger == TriggerType.Application)
             {
                 //this is in nep5
-                if (operation == "totalSupply") return TotalSupply();
-                if (operation == "name") return Name();
-                if (operation == "symbol") return Symbol();
-                if (operation == "decimals") return Decimals();
+                if (operation == "totalSupply") return totalSupply();
+                if (operation == "name") return name();
+                if (operation == "symbol") return symbol();
+                if (operation == "decimals") return decimals();
                 if (operation == "balanceOf")
                 {
                     if (args.Length != 1) return 0;
                     byte[] account = (byte[])args[0];
-                    return BalanceOf(account);
+                    return balanceOf(account);
                 }
-
                 if (operation == "transfer")
                 {
                     if (args.Length != 3) return false;
                     byte[] from = (byte[])args[0];
                     byte[] to = (byte[])args[1];
-                    if (from.Length == 0 || to.Length == 0)
-                        return false;
                     BigInteger value = (BigInteger)args[2];
                     //没有from签名，不让转
                     if (!Runtime.CheckWitness(from))
                         return false;
 
-                    return Transfer(from, to, value);
+                    return transfer(from, to, value);
                 }
 
                 if (operation == "setAccount")
                 {
                     if (args.Length != 1) return false;
-
                     byte[] address = (byte[])args[0];
                     if (!Runtime.CheckWitness(SuperAdmin)) return false;
-                    return SetAccount(address);
+                    return setAccount(address);
                 }
                  
                 if (operation == "setConfig")
@@ -128,51 +99,53 @@ namespace SDUSDContract
                     if (args.Length != 2) return false;
                     string key = (string)args[0];
                     BigInteger value = (BigInteger)args[1];
-                    return SetConfig(key, value); 
+                    return setConfig(key, value); 
                 }
 
                 if (operation == "getConfig")
                 {
                     if (args.Length != 1) return false;
                     string key = (string)args[0];
-
-                    return GetConfig(key);
+                    return getConfig(key);
                 }
 
                 if (operation == "getCDP")
                 {
                     if (args.Length != 1) return false;
-                    byte[] onwer = (byte[])args[0];
-                    return GetCDP(onwer);
+                    byte[] addr = (byte[])args[0];
+                    return getCDP(addr);
                 }
 
                 if (operation == "openCDP")
                 {
                     if (args.Length != 1) return false;
-                    byte[] onwer = (byte[])args[0];
+                    byte[] addr = (byte[])args[0];
 
-                    return OpenCDP(onwer);
+                    if (!Runtime.CheckWitness(addr)) return false;
+
+                    return openCDP(addr);
                 }
 
                 if (operation == "lock")
                 {
                     if (args.Length != 2) return false;
-                    byte[] onwer = (byte[])args[0];
+                    byte[] addr = (byte[])args[0];
                     BigInteger value = (BigInteger)args[1];
 
-                    return Lock(onwer, value);
+                    if (!Runtime.CheckWitness(addr)) return false;
+
+                    return Lock(addr, value);
                 }
 
                 if (operation == "draw")
                 {
                     if (args.Length != 2) return false;
-                    byte[] onwer = (byte[])args[0];
+                    byte[] addr = (byte[])args[0];
                     BigInteger value = (BigInteger)args[0];
 
-                    if (value <= 0) return false;
-                    if (!Runtime.CheckWitness(onwer)) return false;
+                    if (!Runtime.CheckWitness(addr)) return false;
 
-                    return Draw(onwer, value);
+                    return draw(addr, value);
                 }
                 //管理员操作
                 if (operation == "shut")
@@ -181,7 +154,8 @@ namespace SDUSDContract
                     //用户地址
                     byte[] addr = (byte[])args[0];
                     if (!Runtime.CheckWitness(SuperAdmin)) return false;
-                    return Shut(addr);
+
+                    return shut(addr);
 
                 }
                 //测试合约转账
@@ -218,13 +192,37 @@ namespace SDUSDContract
                     if (!(bool)SDTContract("transferFrom", arg)) return false;
                     return true;
                 }
-
             }
-
             return true;
         }
 
-        private static Boolean Shut(byte[] addr)
+
+        //nep5 func
+        public static BigInteger totalSupply()
+        {
+            return Storage.Get(Storage.CurrentContext, TOTAL_SUPPLY).AsBigInteger();
+        }
+        public static string name()
+        {
+            return "AA USD";
+        }
+        public static string symbol()
+        {
+            return "AAUSD";
+        }
+
+        public static byte decimals()
+        {
+            return 8;
+        }
+
+        public static BigInteger balanceOf(byte[] address)
+        {
+            if (address.Length != 20) return 0;
+            return Storage.Get(Storage.CurrentContext, address).AsBigInteger();
+        }
+
+        private static Boolean shut(byte[] addr)
         {
             //CDP是否存在
             var key = addr.Concat(ConvertN(0));
@@ -234,12 +232,12 @@ namespace SDUSDContract
                 return false;
             CDPTransferInfo cdpInfo = (CDPTransferInfo)Helper.Deserialize(cdp);
 
-            byte[] owner = cdpInfo.onwer;
+            byte[] owner = cdpInfo.owner;
             BigInteger locked = cdpInfo.locked;
             BigInteger hasDrawed = cdpInfo.hasDrawed;
 
             //当前余额必须要大于负债
-            BigInteger balance = BalanceOf(addr);
+            BigInteger balance = balanceOf(addr);
             if (hasDrawed > balance) return false;
 
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
@@ -256,7 +254,7 @@ namespace SDUSDContract
             if (hasDrawed > 0)
             {
                 //先要销毁SD
-                Transfer(addr, null, hasDrawed);
+                transfer(addr, null, hasDrawed);
                 //减去总量
                 operateTotalSupply(0 - hasDrawed);
             }
@@ -276,8 +274,9 @@ namespace SDUSDContract
             return true;
         }
 
-        public static bool Transfer(byte[] from, byte[] to, BigInteger value)
+        public static bool transfer(byte[] from, byte[] to, BigInteger value)
         {
+            if (from.Length != 20 || to.Length != 20) return false;
 
             if (value <= 0) return false;
 
@@ -300,13 +299,13 @@ namespace SDUSDContract
                 Storage.Put(Storage.CurrentContext, to, to_value + value);
             }
             //记录交易信息
-            // setTxInfo(from, to, value);
+            //setTxInfo(from, to, value);
             //notify
             Transferred(from, to, value);
             return true;
         }
 
-        public static bool SetAccount(byte[] address)
+        public static bool setAccount(byte[] address)
         { 
             byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
@@ -316,7 +315,7 @@ namespace SDUSDContract
             return true;
         }
 
-        public static bool SetConfig(string key, BigInteger value)
+        public static bool setConfig(string key, BigInteger value)
         {
             if (key == null || key == "") return false;
             //只允许超管操作
@@ -327,7 +326,7 @@ namespace SDUSDContract
             return true; 
         }
 
-        public static BigInteger GetConfig(string key)
+        public static BigInteger getConfig(string key)
         {
             if (key == null || key == "") return 0;
 
@@ -335,7 +334,7 @@ namespace SDUSDContract
         }
 
         /*查询债仓详情*/
-        public static CDPTransferInfo GetCDP(byte[] onwer)
+        public static CDPTransferInfo getCDP(byte[] onwer)
         {
 
             byte[] key = onwer.Concat(ConvertN(0));
@@ -349,23 +348,23 @@ namespace SDUSDContract
         }
 
         /*开启一个新的债仓*/
-        public static bool OpenCDP(byte[] onwer)
+        public static bool openCDP(byte[] addr)
         {
-            if (!Runtime.CheckWitness(onwer)) return false;
+            if (addr.Length != 20) return false;
 
-            CDPTransferInfo cdpInfo_ = GetCDP(onwer);
+            CDPTransferInfo cdpInfo_ = getCDP(addr);
 
             if (cdpInfo_ != null) return false;
 
             byte[] txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
 
             CDPTransferInfo cdpInfo = new CDPTransferInfo();
-            cdpInfo.onwer = onwer;
+            cdpInfo.owner = addr;
             cdpInfo.txid = txid;
             cdpInfo.locked = 0;
             cdpInfo.hasDrawed = 0;
              
-            byte[] key = onwer.Concat(ConvertN(0));
+            byte[] key = addr.Concat(ConvertN(0));
             byte[] cdp = Helper.Serialize(cdpInfo);
 
             Storage.Put(Storage.CurrentContext, key, cdp);
@@ -373,13 +372,15 @@ namespace SDUSDContract
         }
 
         /*向债仓锁定数字资产*/
-        public static bool Lock(byte[] onwer, BigInteger value)
+        public static bool Lock(byte[] addr, BigInteger value)
         {
+            if (addr.Length != 20) return false;
+
             if (value == 0) return false;
 
-            if (!Runtime.CheckWitness(onwer)) return false;
+            if (!Runtime.CheckWitness(addr)) return false;
 
-            byte[] key = onwer.Concat(ConvertN(0));
+            byte[] key = addr.Concat(ConvertN(0));
             byte[] cdp = Storage.Get(Storage.CurrentContext, key);
             if (cdp.Length == 0) return false;
 
@@ -387,7 +388,7 @@ namespace SDUSDContract
             if (to.Length == 0) return false;
 
             object[] arg = new object[3];
-            arg[0] = onwer;
+            arg[0] = addr;
             arg[1] = to;
             arg[2] = value;
 
@@ -402,7 +403,7 @@ namespace SDUSDContract
 
 
             /*校验交易信息*/
-            if (transferInfo.from != onwer || transferInfo.to != to || value != transferInfo.value) return false;
+            if (transferInfo.from != addr || transferInfo.to != to || value != transferInfo.value) return false;
 
             byte[] used = Storage.Get(Storage.CurrentContext, txid);
             /*判断txid是否已被使用*/
@@ -417,7 +418,7 @@ namespace SDUSDContract
 
             //记录交易详细数据
             CDPTransferDetail detail = new CDPTransferDetail();
-            detail.from = onwer;
+            detail.from = addr;
             detail.cdpTxid = cdpInfo.txid;
             detail.type = (int)ConfigTranType.TRANSACTION_TYPE_LOCK;
             detail.operated = value;
@@ -427,13 +428,17 @@ namespace SDUSDContract
             Storage.Put(Storage.CurrentContext, txid, Helper.Serialize(detail));
 
             /*记录txid 已被使用*/
-            Storage.Put(Storage.CurrentContext, txid, onwer);
+            Storage.Put(Storage.CurrentContext, txid, addr);
             return true;
         }
 
-        public static bool Draw(byte[] onwer, BigInteger drawSdusdValue)
+        public static bool draw(byte[] addr, BigInteger drawSdusdValue)
         {
-            byte[] key = onwer.Concat(ConvertN(0));
+            if (addr.Length != 20) return false;
+
+            if (drawSdusdValue <= 0) return false;
+
+            byte[] key = addr.Concat(ConvertN(0));
             byte[] cdp = Storage.Get(Storage.CurrentContext, key);
             if (cdp.Length == 0) return false;
             //获取CDP
@@ -441,14 +446,14 @@ namespace SDUSDContract
             BigInteger locked = cdpInfo.locked;
             BigInteger hasDrawed = cdpInfo.hasDrawed;
              
-            BigInteger sdt_price = GetConfig(CONFIG_SDT_PRICE); 
-            BigInteger sdt_rate = GetConfig(CONFIG_SDT_RATE); ;
+            BigInteger sdt_price = getConfig(CONFIG_SDT_PRICE); 
+            BigInteger sdt_rate = getConfig(CONFIG_SDT_RATE); ;
 
             BigInteger sdusd_limit = sdt_price * locked * 100 / sdt_rate;
 
             if (sdusd_limit < hasDrawed + drawSdusdValue) return false;
 
-            Increase(onwer, drawSdusdValue);
+            Increase(addr, drawSdusdValue);
 
             cdpInfo.hasDrawed = hasDrawed + drawSdusdValue;
 
@@ -458,7 +463,7 @@ namespace SDUSDContract
             //记录交易详细数据
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
             CDPTransferDetail detail = new CDPTransferDetail();
-            detail.from = onwer;
+            detail.from = addr;
             detail.cdpTxid = cdpInfo.txid;
             detail.txid = txid;
             detail.type = (int)ConfigTranType.TRANSACTION_TYPE_DRAW;
@@ -474,7 +479,7 @@ namespace SDUSDContract
         public class CDPTransferInfo
         {
             //拥有者
-            public byte[] onwer;
+            public byte[] owner;
 
             //交易序号
             public byte[] txid;
@@ -544,7 +549,7 @@ namespace SDUSDContract
         {
             if (value <= 0) return false;
 
-            Transfer(null, to, value);
+            transfer(null, to, value);
 
             operateTotalSupply(value);
             return true;
