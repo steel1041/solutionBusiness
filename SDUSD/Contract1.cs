@@ -14,7 +14,7 @@ namespace SDUSDContract
         //超级管理员账户
         private static readonly byte[] SuperAdmin = Helper.ToScriptHash("AZ77FiX7i9mRUPF2RyuJD2L8kS6UDnQ9Y7");
 
-        [Appcall("b0a90b73c6804cbb2d94e4802e084c076bc099e6")] 
+        [Appcall("59aae873270b0dcddae10d9e3701028a31d82433")] 
         public static extern object SDTContract(string method, object[] args);
 
         [DisplayName("transfer")]
@@ -54,7 +54,7 @@ namespace SDUSDContract
 
         public static Object Main(string operation, params object[] args)
         {
-            var magicstr = "2018-06-20 15:16";
+            var magicstr = "2018-06-26 15:20";
 
             if (Runtime.Trigger == TriggerType.Verification)
             {
@@ -141,7 +141,7 @@ namespace SDUSDContract
                 {
                     if (args.Length != 2) return false;
                     byte[] addr = (byte[])args[0];
-                    BigInteger value = (BigInteger)args[0];
+                    BigInteger value = (BigInteger)args[1];
 
                     if (!Runtime.CheckWitness(addr)) return false;
 
@@ -276,8 +276,6 @@ namespace SDUSDContract
 
         public static bool transfer(byte[] from, byte[] to, BigInteger value)
         {
-            if (from.Length != 20 || to.Length != 20) return false;
-
             if (value <= 0) return false;
 
             if (from == to) return true;
@@ -310,7 +308,6 @@ namespace SDUSDContract
             byte[] addr = Storage.Get(Storage.CurrentContext, STORAGE_ACCOUNT);
 
             if (addr.Length != 0) return false;
-
             Storage.Put(Storage.CurrentContext, STORAGE_ACCOUNT, address);
             return true;
         }
@@ -378,8 +375,6 @@ namespace SDUSDContract
 
             if (value == 0) return false;
 
-            if (!Runtime.CheckWitness(addr)) return false;
-
             byte[] key = addr.Concat(ConvertN(0));
             byte[] cdp = Storage.Get(Storage.CurrentContext, key);
             if (cdp.Length == 0) return false;
@@ -396,14 +391,14 @@ namespace SDUSDContract
             
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
 
-            object[] obj = new object[1];
-            obj[0] = txid;
+            //object[] obj = new object[1];
+            //obj[0] = txid;
 
-            TransferInfo transferInfo = (TransferInfo)SDTContract("getTXInfo", obj);
+            //TransferInfo transferInfo = (TransferInfo)SDTContract("getTXInfo", obj);
 
 
             /*校验交易信息*/
-            if (transferInfo.from != addr || transferInfo.to != to || value != transferInfo.value) return false;
+            //if (transferInfo.from != addr || transferInfo.to != to || value != transferInfo.value) return false;
 
             byte[] used = Storage.Get(Storage.CurrentContext, txid);
             /*判断txid是否已被使用*/
@@ -453,12 +448,10 @@ namespace SDUSDContract
 
             if (sdusd_limit < hasDrawed + drawSdusdValue) return false;
 
-            Increase(addr, drawSdusdValue);
+            if (!increase(addr, drawSdusdValue)) return false; ;
 
             cdpInfo.hasDrawed = hasDrawed + drawSdusdValue;
-
-
-            Storage.Put(Storage.CurrentContext, key, cdp);
+            Storage.Put(Storage.CurrentContext, key, Helper.Serialize(cdpInfo));
             
             //记录交易详细数据
             var txid = ((Transaction)ExecutionEngine.ScriptContainer).Hash;
@@ -545,7 +538,7 @@ namespace SDUSDContract
             throw new Exception("not support.");
         }
 
-        public static bool Increase(byte[] to, BigInteger value)
+        public static bool increase(byte[] to, BigInteger value)
         {
             if (value <= 0) return false;
 
